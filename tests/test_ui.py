@@ -50,10 +50,17 @@ def test_navigation_to_every_page(win):
         if name in win.nav_buttons:
             assert win.nav_buttons[name].isChecked()
 
+    # without a Confluence connection the preview shows a friendly error with a retry button
     win.go("preview", source="demo", source_id="demo-besprechung", origin="sources")
     preview = win.pages["preview"]
     assert win.stack.currentWidget() is preview
     assert win.nav_buttons["sources"].isChecked()
+    assert preview.prepared is None
+    assert any("Confluence ist noch nicht verbunden" in t for t in texts(preview, QLabel))
+    retry = side_button(preview, "Erneut versuchen")
+
+    win.services.connect_confluence("https://confluence.example.com", "demo-token-123456")
+    retry.click()
     assert preview.prepared is not None and preview.prepared.action == "create"
     assert preview.title_label.text() == "Vorschau: Teamsitzung 28. Oktober"
     html = preview.browser.toHtml()
@@ -121,7 +128,7 @@ def test_demo_publish_flow_with_conflict(win, monkeypatch):
     mapping = pubs[0]
     assert mapping.status == planner.SYNCED
     assert mapping.space == "DOKU"
-    page = services.fake.pages[mapping.page_id]
+    page = services.fake.pages[mapping.confluence_page_id]
     assert page.parent_id == "1001"
     assert mapping.confluence_url.startswith(DEMO_BASE)
 
@@ -144,15 +151,15 @@ def test_demo_publish_flow_with_conflict(win, monkeypatch):
     keep = side_button(preview, "Confluence-Version behalten")
     side_button(preview, "Mit Quelle überschreiben")
     side_button(preview, "Abbrechen")
-    version_before = services.fake.pages[mapping.page_id].version
-    body_before = services.fake.pages[mapping.page_id].body
+    version_before = services.fake.pages[mapping.confluence_page_id].version
+    body_before = services.fake.pages[mapping.confluence_page_id].body
 
     keep.click()
     assert "✅  Confluence-Version behalten" in texts(preview, QLabel)
     kept = services.publications()[0]
     assert kept.status == planner.SYNCED
-    assert services.fake.pages[mapping.page_id].version == version_before
-    assert services.fake.pages[mapping.page_id].body == body_before
+    assert services.fake.pages[mapping.confluence_page_id].version == version_before
+    assert services.fake.pages[mapping.confluence_page_id].body == body_before
 
     # second manual edit, this time overwrite with the source (confirmation dialog mocked)
     services.demo_edit_confluence(mapping.id)
@@ -164,7 +171,7 @@ def test_demo_publish_flow_with_conflict(win, monkeypatch):
     side_button(preview, "Mit Quelle überschreiben").click()
     assert asked == ["Mit Quelle überschreiben?"]
     assert "🎉  Veröffentlicht!" in texts(preview, QLabel)
-    assert services.fake.pages[mapping.page_id].version == version_before + 2
+    assert services.fake.pages[mapping.confluence_page_id].version == version_before + 2
     assert services.publications()[0].status == planner.SYNCED
 
     # history tab shows the runs
