@@ -1,0 +1,81 @@
+name: Release
+
+# Builds ConfluenceSync.exe for a version tag (e.g. v0.1.0) and attaches it to a GitHub Release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Check tag matches app version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $version = python -c "import confluencesync; print(confluencesync.__version__)"
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "Tag ${{ github.ref_name }} does not match __version__ $version"
+          }
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q
+
+      - name: Build exe
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          python tools/make_icon.py
+          Remove-Item Env:QT_QPA_PLATFORM
+          pyinstaller packaging/ConfluenceSync.spec --noconfirm
+
+      - name: Smoke test exe
+        shell: pwsh
+        run: |
+          $env:CONFLUENCESYNC_HOME = Join-Path $env:RUNNER_TEMP "cs-smoke"
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $p = Start-Process dist/ConfluenceSync.exe -ArgumentList "--demo","--smoke-test" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "exe exited with $($p.ExitCode)" }
+          $log = Get-Content "$env:CONFLUENCESYNC_HOME/logs/confluencesync.log" -Raw
+          if ($log -notmatch "smoke test ok") { throw "smoke test marker missing in log" }
+
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist/ConfluenceSync.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  ConfluenceSync.exe" | Out-File dist/ConfluenceSync.exe.sha256 -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ConfluenceSync
+          path: dist/ConfluenceSync.exe*
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/ConfluenceSync.exe
+            dist/ConfluenceSync.exe.sha256
+          generate_release_notes: true

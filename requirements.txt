@@ -1,0 +1,7 @@
+PySide6-Essentials>=6.7
+pydantic>=2.7
+requests>=2.32
+beautifulsoup4>=4.12
+msal>=1.31
+msal-extensions>=1.2
+keyring>=25
